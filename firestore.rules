@@ -1,0 +1,26 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /recipes/{recipeId} {
+      // You can only create a recipe tagged with your own uid.
+      allow create: if request.auth != null
+                    && request.resource.data.userId == request.auth.uid;
+
+      // You can only read/update/delete recipes tagged with your own uid.
+      allow read, update, delete: if request.auth != null
+                                   && resource.data.userId == request.auth.uid;
+    }
+
+    // --- Future: opening this up for public use ---
+    // Add a boolean `public` field to recipe documents, then replace the
+    // `read` line above with:
+    //
+    //   allow read: if resource.data.public == true
+    //               || (request.auth != null && resource.data.userId == request.auth.uid);
+    //
+    // No other code changes needed — the client already tags every
+    // recipe with userId, so this is a rules-only change.
+  }
+}
