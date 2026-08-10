@@ -8,7 +8,7 @@ service cloud.firestore {
     // here, server-side, so it stays hidden even from someone reading
     // your app's JavaScript source.
     function correctPassphrase() {
-      return "changeme123";
+      return "plov";
     }
 
     function hasUnlocked() {
