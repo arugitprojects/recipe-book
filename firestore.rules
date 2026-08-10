@@ -3,24 +3,43 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    match /recipes/{recipeId} {
-      // You can only create a recipe tagged with your own uid.
-      allow create: if request.auth != null
-                    && request.resource.data.userId == request.auth.uid;
-
-      // You can only read/update/delete recipes tagged with your own uid.
-      allow read, update, delete: if request.auth != null
-                                   && resource.data.userId == request.auth.uid;
+    // CHANGE THIS to your own shared family passphrase before publishing.
+    // This value is never sent to the browser — it's only ever evaluated
+    // here, server-side, so it stays hidden even from someone reading
+    // your app's JavaScript source.
+    function correctPassphrase() {
+      return "changeme123";
     }
 
-    // --- Future: opening this up for public use ---
-    // Add a boolean `public` field to recipe documents, then replace the
-    // `read` line above with:
-    //
-    //   allow read: if resource.data.public == true
-    //               || (request.auth != null && resource.data.userId == request.auth.uid);
-    //
-    // No other code changes needed — the client already tags every
-    // recipe with userId, so this is a rules-only change.
+    function hasUnlocked() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/access/$(request.auth.uid))
+        && get(/databases/$(database)/documents/access/$(request.auth.uid)).data.passphrase == correctPassphrase();
+    }
+
+    // Each anonymous device writes its passphrase attempt here. Anyone can
+    // write their OWN attempt (there's nothing sensitive in a wrong guess),
+    // but hasUnlocked() above is what actually gates real access.
+    match /access/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    match /recipes/{recipeId} {
+      allow read, write: if hasUnlocked();
+    }
   }
 }
+
+// --- How this works ---
+// 1. Everyone is silently signed in anonymously (no accounts, no popups).
+// 2. On first visit on a given device, the app asks for the family
+//    passphrase once and stores the attempt in `access/{their anon uid}`.
+// 3. This file compares that attempt against correctPassphrase() above —
+//    entirely server-side, so the real value never reaches client code.
+// 4. A device that's already unlocked stays unlocked indefinitely (as
+//    long as its browser storage isn't cleared) — no repeated prompts.
+//
+// --- To change the passphrase later ---
+// Edit the string in correctPassphrase() above and republish these rules.
+// This immediately locks out every device that hasn't re-entered the new
+// value — a simple way to revoke access for everyone at once.
