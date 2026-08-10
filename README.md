@@ -15,6 +15,40 @@ Pages**. The database is **Firestore**, with **Firebase Anonymous Auth**
 for sessions — hosting and database are two separate free services that
 don't need to know about each other.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Device["Your device"]
+        Client["PWA client<br/>(HTML / CSS / JS)"]
+    end
+
+    subgraph GH["GitHub Pages — free static hosting"]
+        Files["index.html, app.js,<br/>style.css, sw.js, manifest.json"]
+    end
+
+    subgraph FB["Firebase — free tier"]
+        Auth["Anonymous Auth<br/>silent sign-in, no accounts"]
+        Rules["Security Rules<br/>passphrase check happens here"]
+        Access["access collection<br/>one passphrase attempt per device"]
+        Recipes["recipes collection<br/>the shared notebook"]
+    end
+
+    YT["YouTube Data API<br/>optional: grab ingredients"]
+
+    Client -- loads app files --> Files
+    Client -- silent sign-in --> Auth
+    Auth -- auth token --> Client
+    Client -- read / write requests --> Rules
+    Rules -- checks --> Access
+    Rules -- allows / denies --> Recipes
+    Client -- fetch video description --> YT
+```
+
+Nothing here needs a server you manage: GitHub Pages only serves static
+files, and Firebase's rules engine is what actually enforces who can read
+or write recipes — there's no backend code running anywhere.
+
 ---
 
 ## 1. Create your Firebase project (free) — this is your database
