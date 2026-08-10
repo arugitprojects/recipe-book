@@ -6,7 +6,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js';
 import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc, doc,
-  onSnapshot, query, where, orderBy, serverTimestamp,
+  onSnapshot, query, orderBy, serverTimestamp,
   enableIndexedDbPersistence
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
 
@@ -47,13 +47,24 @@ function renderAuthScreen() {
   root.innerHTML = `
     <div class="auth-screen">
       <h1>Recipe Book</h1>
-      <p>Your own recipes, with video links, web links, and full offline access. Sign in to get started.</p>
+      <p>A shared recipe notebook for the family — video links, web links, and full offline access. Sign in to get started.</p>
       <button class="btn-primary" id="sign-in-btn">Sign in with Google</button>
     </div>
   `;
   document.getElementById('sign-in-btn').addEventListener('click', () => {
     signInWithPopup(auth, new GoogleAuthProvider()).catch((e) => alert('Sign-in failed: ' + e.message));
   });
+}
+
+function renderPendingAccessScreen() {
+  root.innerHTML = `
+    <div class="auth-screen">
+      <h1>Almost there</h1>
+      <p>You're signed in as ${escapeHtml(currentUser.email || '')}, but this account hasn't been added to the shared recipe book yet. Ask whoever set this up to add you.</p>
+      <button class="btn-secondary" id="sign-out-btn">Sign out</button>
+    </div>
+  `;
+  document.getElementById('sign-out-btn').addEventListener('click', () => signOut(auth));
 }
 
 onAuthStateChanged(auth, (user) => {
@@ -72,16 +83,15 @@ onAuthStateChanged(auth, (user) => {
 // ---------- Firestore subscription ----------
 
 function subscribeToRecipes() {
-  const q = query(
-    collection(db, 'recipes'),
-    where('userId', '==', currentUser.uid),
-    orderBy('title')
-  );
+  const q = query(collection(db, 'recipes'), orderBy('title'));
   unsubscribeRecipes = onSnapshot(q, (snapshot) => {
     allRecipes = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
     renderRecipeList();
   }, (err) => {
     console.error('Recipe subscription error', err);
+    if (err.code === 'permission-denied') {
+      renderPendingAccessScreen();
+    }
   });
 }
 
@@ -178,6 +188,7 @@ function renderRecipeList() {
       <h3>${escapeHtml(r.title)}</h3>
       ${r.description ? `<p class="desc">${escapeHtml(r.description)}</p>` : ''}
       <div class="tags">${(r.tags || []).map((t) => `<span>${escapeHtml(t)}</span>`).join('')}</div>
+      ${r.createdByName ? `<div class="added-by">Added by ${escapeHtml(r.createdByName)}</div>` : ''}
     </button>
   `).join('');
 
@@ -242,6 +253,10 @@ function openDetailSheet(id) {
       ${recipe.notes ? `
         <div class="section-label">Notes</div>
         <p style="font-size:14.5px; line-height:1.6; color:var(--ink-muted); margin:0;">${escapeHtml(recipe.notes)}</p>
+      ` : ''}
+
+      ${recipe.createdByName ? `
+        <p class="added-by" style="margin-top:16px;">Added by ${escapeHtml(recipe.createdByName)}${recipe.lastEditedByName && recipe.lastEditedByName !== recipe.createdByName ? ` · last edited by ${escapeHtml(recipe.lastEditedByName)}` : ''}</p>
       ` : ''}
 
       <div class="sheet-actions">
@@ -399,8 +414,8 @@ function openFormSheet(recipe) {
 
   backdrop.querySelector('#recipe-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const data = {
-      userId: currentUser.uid,
+    const editorName = currentUser.displayName || currentUser.email || 'Someone';
+    const baseData = {
       title: document.getElementById('f-title').value.trim(),
       description: document.getElementById('f-desc').value.trim(),
       tags: splitLines(document.getElementById('f-tags').value, ','),
@@ -410,17 +425,23 @@ function openFormSheet(recipe) {
       webUrl: document.getElementById('f-web').value.trim(),
       notes: document.getElementById('f-notes').value.trim(),
       pinned: document.getElementById('f-pinned').checked,
-      updatedAt: serverTimestamp()
+      updatedAt: serverTimestamp(),
+      lastEditedBy: currentUser.uid,
+      lastEditedByName: editorName
     };
 
-    if (!data.title) return;
+    if (!baseData.title) return;
 
     try {
       if (isEdit) {
-        await updateDoc(doc(db, 'recipes', recipe.id), data);
+        await updateDoc(doc(db, 'recipes', recipe.id), baseData);
       } else {
-        data.createdAt = serverTimestamp();
-        await addDoc(collection(db, 'recipes'), data);
+        await addDoc(collection(db, 'recipes'), {
+          ...baseData,
+          createdBy: currentUser.uid,
+          createdByName: editorName,
+          createdAt: serverTimestamp()
+        });
       }
       close();
     } catch (err) {
