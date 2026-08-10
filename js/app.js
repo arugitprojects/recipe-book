@@ -2,10 +2,10 @@ import { firebaseConfig, youtubeApiKey } from './firebase-config.js';
 import { extractYoutubeId, fetchVideoSnippet, parseIngredientsFromDescription } from './youtube.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js';
 import {
-  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+  getAuth, signInAnonymously, onAuthStateChanged
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js';
 import {
-  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc,
+  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, setDoc,
   onSnapshot, query, orderBy, serverTimestamp,
   enableIndexedDbPersistence
 } from 'https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js';
@@ -37,34 +37,70 @@ let activeTagFilter = null;
 let searchTerm = '';
 let unsubscribeRecipes = null;
 
+const NAME_KEY = 'recipeBookName';
+
+function getLocalName() {
+  return localStorage.getItem(NAME_KEY) || '';
+}
+
+function setLocalName(name) {
+  localStorage.setItem(NAME_KEY, name);
+}
+
 // ---------- DOM ----------
 
 const root = document.getElementById('app-root');
 
 // ---------- Auth ----------
 
-function renderAuthScreen() {
+function renderConnectingScreen() {
   root.innerHTML = `
     <div class="auth-screen">
       <h1>Recipe Book</h1>
-      <p>A shared recipe notebook for the family — video links, web links, and full offline access. Sign in to get started.</p>
-      <button class="btn-primary" id="sign-in-btn">Sign in with Google</button>
+      <p>Connecting…</p>
     </div>
   `;
-  document.getElementById('sign-in-btn').addEventListener('click', () => {
-    signInWithPopup(auth, new GoogleAuthProvider()).catch((e) => alert('Sign-in failed: ' + e.message));
+}
+
+function renderPassphraseGate(errorMessage) {
+  root.innerHTML = `
+    <div class="auth-screen">
+      <h1>Recipe Book</h1>
+      <p>A shared recipe notebook for the family. Enter your name and the family passphrase to get in — you'll only need to do this once on this device.</p>
+      <form id="unlock-form" style="width:100%; max-width:300px; text-align:left;">
+        <div class="form-field">
+          <label for="gate-name">Your name</label>
+          <input type="text" id="gate-name" required value="${escapeAttr(getLocalName())}" placeholder="Jordan">
+        </div>
+        <div class="form-field">
+          <label for="gate-passphrase">Family passphrase</label>
+          <input type="password" id="gate-passphrase" required autocomplete="off">
+        </div>
+        ${errorMessage ? `<p style="color:var(--danger); font-size:13.5px; margin:-4px 0 12px;">${escapeHtml(errorMessage)}</p>` : ''}
+        <button type="submit" class="btn-primary" style="width:100%;">Unlock</button>
+      </form>
+    </div>
+  `;
+
+  document.getElementById('unlock-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = document.getElementById('gate-name').value.trim();
+    const passphrase = document.getElementById('gate-passphrase').value;
+    if (!name || !passphrase) return;
+
+    setLocalName(name);
+    try {
+      await setDoc(doc(db, 'access', currentUser.uid), { passphrase });
+      attemptEnter();
+    } catch (err) {
+      renderPassphraseGate('Something went wrong submitting that — try again.');
+    }
   });
 }
 
-function renderPendingAccessScreen() {
-  root.innerHTML = `
-    <div class="auth-screen">
-      <h1>Almost there</h1>
-      <p>You're signed in as ${escapeHtml(currentUser.email || '')}, but this account hasn't been added to the shared recipe book yet. Ask whoever set this up to add you.</p>
-      <button class="btn-secondary" id="sign-out-btn">Sign out</button>
-    </div>
-  `;
-  document.getElementById('sign-out-btn').addEventListener('click', () => signOut(auth));
+function attemptEnter() {
+  renderConnectingScreen();
+  subscribeToRecipes();
 }
 
 onAuthStateChanged(auth, (user) => {
@@ -72,12 +108,15 @@ onAuthStateChanged(auth, (user) => {
   if (unsubscribeRecipes) { unsubscribeRecipes(); unsubscribeRecipes = null; }
 
   if (!user) {
-    renderAuthScreen();
+    renderConnectingScreen();
+    // Silently establish an anonymous session — no accounts, no popups.
+    signInAnonymously(auth).catch((err) => {
+      root.innerHTML = `<div class="auth-screen"><h1>Recipe Book</h1><p>Couldn't connect: ${escapeHtml(err.message)}</p></div>`;
+    });
     return;
   }
 
-  renderAppShell();
-  subscribeToRecipes();
+  attemptEnter();
 });
 
 // ---------- Firestore subscription ----------
@@ -86,11 +125,12 @@ function subscribeToRecipes() {
   const q = query(collection(db, 'recipes'), orderBy('title'));
   unsubscribeRecipes = onSnapshot(q, (snapshot) => {
     allRecipes = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+    if (!document.getElementById('recipe-list')) renderAppShell();
     renderRecipeList();
   }, (err) => {
     console.error('Recipe subscription error', err);
     if (err.code === 'permission-denied') {
-      renderPendingAccessScreen();
+      renderPassphraseGate('That passphrase wasn\'t right — try again.');
     }
   });
 }
@@ -100,7 +140,7 @@ function subscribeToRecipes() {
 function renderAppShell() {
   root.innerHTML = `
     <header class="app-header">
-      <h1>Recipe Book <span class="byline">${escapeHtml(currentUser.displayName || currentUser.email || '')}</span></h1>
+      <h1>Recipe Book <span class="byline">${escapeHtml(getLocalName())}</span></h1>
       <div class="search-row">
         <input type="search" id="search-input" placeholder="Search recipes or ingredients…" autocomplete="off">
       </div>
@@ -414,7 +454,7 @@ function openFormSheet(recipe) {
 
   backdrop.querySelector('#recipe-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const editorName = currentUser.displayName || currentUser.email || 'Someone';
+    const editorName = getLocalName() || 'Someone';
     const baseData = {
       title: document.getElementById('f-title').value.trim(),
       description: document.getElementById('f-desc').value.trim(),
