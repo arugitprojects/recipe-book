@@ -202,6 +202,13 @@ input:focus, textarea:focus, button:focus-visible {
   border-radius: 999px;
 }
 
+.added-by {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  margin-top: 10px;
+}
+
 .pin-badge {
   position: absolute;
   top: 14px;
