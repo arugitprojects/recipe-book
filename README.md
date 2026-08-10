@@ -1,21 +1,26 @@
 # Recipe Book
 
-A personal recipe notebook: title, description, tags, ingredients, steps,
-a YouTube link (with automatic ingredient grabbing), a web link, and notes
-— installable as an app on Android (and desktop), with full offline access
-to your own recipes.
+A shared family recipe notebook: title, description, tags, ingredients,
+steps, a YouTube link (with automatic ingredient grabbing), a web link,
+and notes — installable as an app on Android (and desktop), with full
+offline access.
+
+**Access**: no individual accounts. Everyone is signed in silently and
+automatically (Firebase anonymous auth), and unlocks the shared notebook
+once per device with a family passphrase you set. See "How access works"
+below for the full picture.
 
 **Stack**: plain HTML/CSS/JS, no build step, hosted free on **GitHub
-Pages**. The database is **Firestore** (with **Firebase Auth** for
-sign-in) — hosting and database are two separate free services that don't
-need to know about each other.
+Pages**. The database is **Firestore**, with **Firebase Anonymous Auth**
+for sessions — hosting and database are two separate free services that
+don't need to know about each other.
 
 ---
 
 ## 1. Create your Firebase project (free) — this is your database
 
 1. Go to [console.firebase.google.com](https://console.firebase.google.com) and create a new project.
-2. **Authentication** → Get started → enable the **Google** sign-in provider.
+2. **Authentication** → Get started → **Sign-in method** tab → enable **Anonymous**.
 3. **Firestore Database** → Create database → start in **production mode** (we supply our own rules below) → pick any region close to you.
 4. **Project settings** (gear icon) → **General** → scroll to "Your apps" → click the web icon (`</>`) → register an app (any nickname). You do **not** need Firebase Hosting for this — just copy the `firebaseConfig` object it shows you.
 
@@ -26,16 +31,16 @@ config object from step 1.4. These values identify your project — they
 aren't secret, so it's fine for them to sit in client code. Access control
 is enforced by the security rules below, not by hiding this file.
 
-## 3. Deploy your security rules
+## 3. Set your passphrase and publish your security rules
 
-In the Firebase console: **Firestore Database** → **Rules** tab → paste in
-the contents of `firestore.rules` from this project → **Publish**.
+Open `firestore.rules` in this project and change the value inside
+`correctPassphrase()` to whatever you want your family passphrase to be.
+This value is never sent to the browser — it's only ever compared
+server-side by Firestore, so it stays hidden even from someone reading
+your app's JavaScript.
 
-This scopes every recipe to the signed-in user who created it (via a
-`userId` field on each document) — so even though the app is single-user
-today, the data model is already public-ready. See the comment at the
-bottom of `firestore.rules` for the one-line change needed to open it up
-later.
+Then, in the Firebase console: **Firestore Database** → **Rules** tab →
+paste in the full contents of your edited `firestore.rules` → **Publish**.
 
 ## 4. Push this project to GitHub
 
@@ -60,23 +65,20 @@ set **Source** to "Deploy from a branch" → branch `main`, folder `/ (root)`
 GitHub will give you a live URL shortly, in the form:
 `https://YOUR-USERNAME.github.io/recipe-book/`
 
-That's the whole hosting setup — every time you `git push` an update, the
-site redeploys automatically within a minute or two, no extra steps.
+Every time you `git push` an update, the site redeploys automatically —
+usually within a minute or two, though GitHub's CDN can occasionally lag
+a bit longer. If a change doesn't seem to have landed, check
+**Actions** or **Deployments** in your repo before assuming something's
+broken.
 
-## 6. Connect the two: authorize your GitHub Pages domain in Firebase
+## 6. Try it
 
-Firebase blocks sign-in from domains it doesn't recognize. In the Firebase
-console: **Authentication** → **Settings** → **Authorized domains** → **Add domain**
-→ enter `YOUR-USERNAME.github.io` (domain only, no path). Without this
-step, Google sign-in will fail with an "unauthorized domain" error.
+Open your GitHub Pages URL. You'll be signed in automatically (no popups,
+nothing to click), then asked for your name and the family passphrase you
+set in step 3. Enter both — this device is now unlocked permanently
+(unless its browser storage gets cleared).
 
-## 7. Try it
-
-Open your GitHub Pages URL, sign in with Google, and add a recipe. Since
-this is a fresh Firestore database, the recipe list starts empty — that's
-expected.
-
-## 8. Optional: auto-grab ingredients from YouTube
+## 7. Optional: auto-grab ingredients from YouTube
 
 When adding or editing a recipe, pasting a YouTube link enables a "Grab
 ingredients" button. It reads the video's **description** via the YouTube
@@ -97,7 +99,7 @@ To enable it:
 The free quota (10,000 units/day, ~1 unit per lookup) is far more than a
 personal recipe box will ever use.
 
-## 9. Install it on Android
+## 8. Install it on Android
 
 Open your GitHub Pages URL in Chrome on your Android phone → menu (⋮) →
 **Add to Home screen**. It launches full-screen with its own icon, exactly
@@ -116,27 +118,56 @@ python3 -m http.server 8000
 
 Then open `http://localhost:8000`. (Opening `index.html` directly via
 `file://` won't work — ES module imports and service workers both require
-being served over `http://` or `https://`.) You'll need to temporarily add
-`localhost` to Firebase's authorized domains list (step 6) to sign in
-while testing locally — it's usually there by default.
+being served over `http://` or `https://`.)
+
+## How access works
+
+There are no individual accounts — everyone shares the same passphrase
+and the same notebook, full read/write for anyone who's unlocked their
+device. The mechanics:
+
+1. On page load, the app silently signs each visitor in via Firebase's
+   **anonymous** auth — this creates a session with no user interaction
+   at all, just to give Firestore something to check permissions against.
+2. The first time on a given device, the app asks for a name (stored
+   locally, used to label recipes you add — e.g. "Added by Jordan") and
+   the family passphrase (sent to Firestore, checked against the value
+   in `firestore.rules`).
+3. If correct, that device's anonymous identity is now permanently
+   trusted — it won't ask again unless its browser storage is cleared.
+
+**To change the passphrase later** (e.g. to revoke access for everyone at
+once): edit the value in `correctPassphrase()` in `firestore.rules`,
+republish, and every device will need to re-enter the new passphrase on
+its next visit.
+
+**Trade-off worth knowing**: since access is passphrase-based rather than
+per-person, there's no way to revoke just one individual's access without
+changing the passphrase for everyone. If that becomes a problem later,
+switching to real per-person accounts (e.g. Google sign-in with an
+allowlist) is a moderate rework, not a full rewrite — the recipe schema
+itself wouldn't need to change.
 
 ## How offline access works
 
-Firestore's client SDK caches every document your account has ever synced
-in local IndexedDB (enabled in `js/app.js`). At personal scale, your whole
-recipe collection stays cached automatically — the "Pin for offline" star
-on each recipe is there for your own reference (and becomes functionally
-important later if the collection grows very large and eviction becomes
-relevant), but you don't need to think about it day to day. Ingredients
-and steps are plain fields on the recipe document, so they're available
-offline with zero extra code. YouTube/web links obviously need a live
-connection to open.
+Firestore's client SDK caches every document your device has ever synced
+in local IndexedDB (enabled in `js/app.js`). At personal/family scale,
+the whole recipe collection stays cached automatically — the "Pin for
+offline" star on each recipe is there mostly for your own reference, and
+becomes functionally important only if the collection grows very large
+and cache eviction becomes relevant. Ingredients and steps are plain
+fields on the recipe document, so they're available offline with zero
+extra code. YouTube/web links obviously need a live connection to open.
 
 ## Scaling to a public app later
 
-The data model already supports it — see the comment block in
-`firestore.rules`. Broadly: add a `public` boolean field, relax the read
-rule, open up additional sign-in methods, and consider adding full-text
-search (Firestore's own querying is limited) via something like Algolia
-or Typesense once you have enough recipes that ingredient/keyword search
-matters.
+The current model (a single shared passphrase, full access to anyone who
+has it) is designed for a trusted household, not the general public —
+opening it up further is a bigger step than adding one field. Broadly it
+would mean: replacing the passphrase check with real self-serve sign-up,
+adding per-recipe ownership back in (so strangers can't edit each other's
+recipes — a `createdBy` field already exists on every recipe for this),
+and probably adding moderation and rate limits. Also worth adding at that
+point: full-text search (Firestore's own querying is limited) via
+something like Algolia or Typesense once there are enough recipes that
+ingredient/keyword search matters.
