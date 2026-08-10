@@ -9,4 +9,4 @@ export const firebaseConfig = {
 
 // Optional — only needed for the "Grab ingredients from YouTube" button.
 // Leave as REPLACE_ME to skip this feature entirely.
-export const youtubeApiKey = "REPLACE_ME";
+export const youtubeApiKey = "AIzaSyBA5DWQ32xlgWG-I-hwAQiKusIevZVrQQk";
